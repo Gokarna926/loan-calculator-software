@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Loan Calculator (Rs.) + Export</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
+
+  <!-- External Libraries -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.25/jspdf.plugin.autotable.min.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-database-compat.js"></script>
+
+  <style>
+    body {
+      background: #f0f8ff;
+      font-family: 'Segoe UI', sans-serif;
+      display: flex;
+      justify-content: center;
+      padding: 20px;
+    }
+    .calculator-card {
+      background: #fff;
+      border-radius: 20px;
+      box-shadow: 6px 6px 16px #d1d9e6, -6px -6px 16px #fff;
+      padding: 30px;
+      max-width: 650px;
+      width: 100%;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    th, td {
+      padding: 6px;
+      text-align: right;
+      border-bottom: 1px solid #ccc;
+    }
+    th { background-color: #1976d2; color: white; }
+    td.month, td.date { text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="calculator-card">
+    <h3 class="text-center mb-4">Loan Calculator (Rs.)</h3>
+    <form id="loan-form">
+      <div class="mb-2">
+        <label>Loan Amount (Rs.)</label>
+        <input type="number" class="form-control" id="amount" required />
+      </div>
+      <div class="mb-2">
+        <label>Interest Rate (%)</label>
+        <input type="number" class="form-control" id="interest" step="0.01" required />
+      </div>
+      <div class="row g-2">
+        <div class="col">
+          <label>Years</label>
+          <input type="number" class="form-control" id="years" />
+        </div>
+        <div class="col">
+          <label>Months</label>
+          <input type="number" class="form-control" id="months" />
+        </div>
+      </div>
+      <button class="btn btn-primary w-100 mt-3">Calculate</button>
+    </form>
+
+    <div id="result" class="mt-4" style="display:none;">
+      <p><strong>Monthly Payment:</strong> Rs. <span id="monthly-payment"></span></p>
+      <p><strong>Total Payment:</strong> Rs. <span id="total-payment"></span></p>
+      <p><strong>Total Interest:</strong> Rs. <span id="total-interest"></span></p>
+      <div class="d-flex justify-content-between mb-2">
+        <button onclick="exportToExcel()" class="btn btn-success">Export Excel</button>
+        <button onclick="exportToPDF()" class="btn btn-danger">Export PDF</button>
+      </div>
+      <table id="amortization-table">
+        <thead>
+          <tr><th>Month</th><th>Principal</th><th>Interest</th><th>Balance</th></tr>
+        </thead>
+        <tbody id="amortization-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    const firebaseConfig = {
+      apiKey: "YOUR_API_KEY",
+      authDomain: "YOUR_DOMAIN.firebaseapp.com",
+      databaseURL: "https://YOUR_DOMAIN.firebaseio.com",
+      projectId: "YOUR_PROJECT_ID",
+      storageBucket: "YOUR_BUCKET.appspot.com",
+      messagingSenderId: "YOUR_SENDER_ID",
+      appId: "YOUR_APP_ID"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+
+    document.getElementById("loan-form").addEventListener("submit", function(e) {
+      e.preventDefault();
+
+      const amount = parseFloat(document.getElementById("amount").value);
+      const interest = parseFloat(document.getElementById("interest").value);
+      const years = parseInt(document.getElementById("years").value) || 0;
+      const monthsInput = parseInt(document.getElementById("months").value) || 0;
+      const totalMonths = years * 12 + monthsInput;
+
+      const startDate = new Date();
+      const r = interest / 100 / 12;
+      const n = totalMonths;
+      const EMI = r === 0 ? amount / n : (amount * r * Math.pow(1 + r, n)) / (Math.pow(1 + r, n) - 1);
+      const total = EMI * n;
+      const interestTotal = total - amount;
+
+      document.getElementById("monthly-payment").innerText = EMI.toFixed(2);
+      document.getElementById("total-payment").innerText = total.toFixed(2);
+      document.getElementById("total-interest").innerText = interestTotal.toFixed(2);
+      document.getElementById("result").style.display = "block";
+
+      db.ref("loans").push({ amount, interest, years, months: monthsInput, startDate: startDate.toISOString(), EMI, total, interestTotal });
+
+      const tbody = document.getElementById("amortization-body");
+      tbody.innerHTML = "";
+      let balance = amount;
+      for (let i = 0; i < n; i++) {
+        const interestPaid = r === 0 ? 0 : balance * r;
+        const principal = EMI - interestPaid;
+        balance -= principal;
+        tbody.innerHTML += `<tr><td class="month">${i + 1}</td><td>Rs. ${principal.toFixed(2)}</td><td>Rs. ${interestPaid.toFixed(2)}</td><td>Rs. ${balance.toFixed(2)}</td></tr>`;
+      }
+    });
+
+    function exportToExcel() {
+      const wb = XLSX.utils.book_new();
+      const ws = XLSX.utils.table_to_sheet(document.getElementById("amortization-table"));
+      XLSX.utils.book_append_sheet(wb, ws, "Amortization");
+      XLSX.writeFile(wb, "Loan-Amortization.xlsx");
+    }
+
+    async function exportToPDF() {
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF();
+      doc.text("Loan Amortization Schedule", 14, 15);
+      doc.autoTable({ html: '#amortization-table', startY: 20 });
+      doc.save("Loan-Amortization.pdf");
+    }
+  </script>
+</body>
+</html>
